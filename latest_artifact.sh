@@ -13,23 +13,33 @@ artifact_name=$6
 echoerr() { echo "$@" 1>&2; }
 
 workflows_url="https://api.github.com/repos/${repository}/actions/workflows"
-workflows=$(curl -sS -H "Authorization: Bearer ${github_token}" "${workflows_url}")
-latest_workflow_id=$(echo ${workflows} \
-	| jq \
+
+workflow_page=1
+workflow_count=0
+workflow_ids=()
+
+while true; do
+  workflows=$(curl -sS -H "Authorization: Bearer ${github_token}" "${workflows_url}?page=${workflow_page}")
+
+  workflow_ids+=($(
+    jq \
 		--arg workflow_name "$workflow_name" \
-		'.workflows[] | select(.name==$workflow_name).id' || echo "ERROR")
+		'.workflows[] | select(.name==$workflow_name).id' <<< ${workflows}
+  ))
 
-if [ "${latest_workflow_id}" = "ERROR" ]; then
-	echoerr 'Failed to parse GitHub response with jq:'
-	echoerr "(url: ${workflows_url})"
-	echoerr "${workflows}"
-	exit 0
-fi
+  (( workflow_count += $(jq '.workflows | length' <<< ${workflows}) ))
+  (( ++workflow_page ))
 
-if [ "${latest_workflow_id}" = "null" ]; then
+  if [[ $workflow_count -ge $(jq .total_count <<< ${workflows}) ]]; then
+    break
+  fi
+done
+
+if [[ ${#workflow_ids[@]} -eq 0 ]]; then
   echoerr "No workflow found with name ${workflow_name}"
   exit 0
 fi
+latest_workflow_id=${workflow_ids[${#workflow_ids[@]}-1]}
 echoerr "Latest workflow ID: ${latest_workflow_id}"
 
 workflow_runs_url="https://api.github.com/repos/${repository}/actions/workflows/${latest_workflow_id}/runs?status=success&branch=${branch_name}"
